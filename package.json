@@ -1,0 +1,15 @@
+{
+  "name": "redis-json-importer",
+  "version": "1.0.0",
+  "description": "A simple script to take a json file and import into redis",
+  "main": "import.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Andy Savage <andy@savage.hk> (http://andy.savage.hk)",
+  "license": "SEE LICENSE IN License.txt",
+  "dependencies": {
+    "optimist": "^0.6.1",
+    "redis": "^2.4.2"
+  }
+}
