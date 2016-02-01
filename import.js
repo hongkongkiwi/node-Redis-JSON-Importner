@@ -10,46 +10,47 @@ var options = require('optimist')
         alias: 'redisurl',
         describe: "connect url for redis",
         default: 'redis://localhost:6379'
+    })
+    .options('d', {
+        alias: 'dryrun',
+        boolean: true,
+        describe: "Do not actually import anything into redis, just show commands",
+        default: false
+    })
+    .options('a', {
+        alias: 'action',
+        describe: "Whether to import or export",
+        default: 'import'
+    })
+    .check(function(argv) {
+        if (argv._.length === 0) throw 'No JSON file passed';
+        var file = argv._[0];
+        if (path.basename(file) === file) {
+            file = path.join(__dirname,file);
+        }
+        try {
+            fs.statSync(file);
+        } catch (err) {
+            if (err.errno === -2) {
+                throw 'Invalid JSON file passed!';
+            } else {
+                throw err;
+            }
+        }
+        var json = require(file);
+        if (_.isEmpty(json)) {
+            throw 'JSON file is empty!';
+        } else if (!_.isObject(json)) {
+            throw 'JSON file the wrong format!';
+        }
+        argv._[0] = file;
+        argv.json = json;
+        if (argv.action !== 'import' && argv.action !== 'export') throw 'Unknown Action! Must be "import" or "export"';
+        return true;
     });
+
 var argv = options.argv;
-
-if (argv._.length === 0) {
-    console.log(options.help());
-    console.log('No JSON file passed');
-    process.exit(1);
-}
-
-var file = argv._[0];
-if (path.basename(file) === file) {
-    file = path.join(__dirname,file);
-}
-
-try {
-    fs.statSync(file);
-} catch (err) {
-    if (err.errno === -2) {
-        console.log(options.help());
-        console.log('Invalid JSON file passed!');
-    } else {
-        console.error('ERROR: Error getting stats for file!');
-        console.error(err);
-    }
-    process.exit(1);
-}
-
-var json = require(file);
-
-if (_.isEmpty(json)) {
-    console.log(options.help());
-    console.log('JSON file is empty!');
-    process.exit(1);
-} else if (!_.isObject(json)) {
-    console.log(options.help());
-    console.log('JSON file the wrong format!');
-    process.exit(1);
-}
-
-var data = json[1];
+var json = argv.json;
 
 client = redis.createClient();
 
@@ -59,41 +60,72 @@ client.on("error", function (err) {
 });
 
 client.on('ready', function() {
-    console.log('Reading JSON file ' + path.basename(file));
-    console.log('------------------------------');
+    if (argv.action === 'import') {
+        console.log('Reading JSON file ' + path.basename(argv._[0]));
+        console.log('Found ' + json.length + ' db to import');
+        console.log('------------------------------');
 
-    _.each(_.keys(data), function(key) {
-        var value = data[key];
-        if (_.isEmpty(value)) {
-            // Skip empty key
-            return;
-        }
-        // Assume Set
-        if (_.isArray(value)) {
-            _.each(value, function(item) {
-                if (!argv.dryrun) {
-                    client.sadd(key, item);
+        var dbCounter = 0;
+        _.each(json, function(data) {
+            _.each(_.keys(data), function(key) {
+                var value = data[key];
+                if (_.isEmpty(value)) {
+                    // Skip empty key
+                    return;
                 }
-                console.log('sadd "' + key + '" "' + item + '"');
+                // Assume List
+                if (_.isArray(value)) {
+                    _.each(value, function(item) {
+                        if (argv.dryrun === false) {
+                            client.lpush(key, item);
+                        }
+                        console.log('lpush "' + key + '" "' + item + '"');
+                    });
+                // Assume Hash, List or Sorted Set (NOT IMPLEMENTED)
+                } else if (_.isObject(value)) {
+                //     _.each(_.keys(value), function(item) {
+                //         console.log('sadd "' + key + '" "' + item + '"');
+                //     });
+                    _.each(_.keys(value), function(itemKey) {
+                        if (_.isString(value[itemKey])) {
+                            var itemValue = value[itemKey];
+                            if (argv.dryrun === false) {
+                                client.hset(key, itemKey, itemValue);
+                            }
+                            console.log('hset "' + key + '" "' + itemKey + '" "' + itemValue + '"');
+                        // Assume this is a sorted set
+                        } else if (_.isNumber(value[itemKey])) {
+                            var itemWeight = value[itemKey];
+                            // Should be trivial to implement sorted set, most likely
+                            // client.zadd(key, itemKey, itemWeight);
+                            console.error('SORTED SET NOT IMPLEMENTED');
+                        // Assume this is a set
+                        } else if (_.isBoolean(value[itemKey])) {
+                            if (argv.dryrun === false) {
+                                client.sadd(key, itemKey);
+                            }
+                            console.log('sadd "' + key + '" "' + itemKey + '"');
+                        } else {
+                            console.error('UNKNOWN DATA TYPE: ' + value[itemKey]);
+                        }
+                    });
+                // Assume String
+                } else if (_.isString(value)) {
+                    if (argv.dryrun === false) {
+                        client.set(key, value);
+                    }
+                    console.log('set "' + key + '" "' + value + '"');
+                }
             });
-        // Assume Hash, List or Sorted Set (NOT IMPLEMENTED)
-        } else if (_.isObject(value)) {
-        //     _.each(_.keys(value), function(item) {
-        //         console.log('sadd "' + key + '" "' + item + '"');
-        //     });
-            console.log('NOT IMPLEMENTED FOR THIS TYPE');
-        // Assume String
-        } else if (_.isString(value)) {
-            if (!argv.dryrun) {
-                client.set(key, value);
-            }
-            console.log('set "' + key + '" "' + value + '"');
-        }
-    });
+            dbCounter++;
+        });
 
-    client.quit();
-    console.log('------------------------------');
-    console.log('All JSON Data Processed!');
+        client.quit();
+        console.log('------------------------------');
+        console.log('All JSON Data Processed!');
+    } else {
+        console.error('EXPORT ACTION NOT IMPLEMENTED!');
+    }
 
     process.exit(0);
 });
